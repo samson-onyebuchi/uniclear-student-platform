@@ -3,13 +3,10 @@
 # FILE: pyproject.toml
 #
 # PURPOSE:
-# 1. Define basic Python project metadata.
-# 2. Specify the minimum supported Python version.
-# 3. Keep project configuration organized.
-# 4. Support development tools that read pyproject.toml.
-#
-# NOTE:
-# Application dependencies are managed in requirements.txt.
+# 1. Define project metadata.
+# 2. Specify the supported Python version.
+# 3. Declare runtime dependencies for deployment.
+# 4. Keep dependency configuration consistent with requirements.txt.
 # ==========================================================
 
 [project]
@@ -17,3 +14,17 @@ name = "uniclear-student-platform"
 version = "1.0.0"
 description = "A final-year student clearance management platform built with Flask and MongoDB."
 requires-python = ">=3.10"
+
+dependencies = [
+    "Flask==2.2.2",
+    "Werkzeug==2.2.2",
+    "Flask-RESTful==0.3.9",
+    "Flask-PyMongo==2.3.0",
+    "Flask-Cors==4.0.0",
+    "Flask-Mail==0.9.1",
+    "pymongo[srv]==4.6.3",
+    "dnspython==2.6.1",
+    "bcrypt==4.2.0",
+    "python-dotenv==1.0.1",
+    "gunicorn==20.1.0",
+]
