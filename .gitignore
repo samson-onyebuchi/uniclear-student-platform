@@ -1,0 +1,60 @@
+# ==========================================================
+# UNICLEAR - STUDENT CLEARANCE PLATFORM
+# FILE: .gitignore
+#
+# PURPOSE:
+# 1. Prevent secrets and environment variables from being
+#    uploaded to GitHub.
+# 2. Exclude Python virtual environments and cache files.
+# 3. Exclude local development files and generated artifacts.
+# 4. Keep the repository suitable for deployment.
+# ==========================================================
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Python virtual environments
+venv/
+.venv/
+env/
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Python packaging and build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Test and coverage artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs
+*.log
+
+# Local database and uploaded files
+instance/
+uploads/
+*.sqlite3
+*.db
+
+# IDE and editor settings
+.vscode/
+.idea/
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Deployment and temporary files
+.vercel/
+.vercel
+*.tmp
+*.temp

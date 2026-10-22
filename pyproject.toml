@@ -1,0 +1,19 @@
+# ==========================================================
+# UNICLEAR - STUDENT CLEARANCE PLATFORM
+# FILE: pyproject.toml
+#
+# PURPOSE:
+# 1. Define basic Python project metadata.
+# 2. Specify the minimum supported Python version.
+# 3. Keep project configuration organized.
+# 4. Support development tools that read pyproject.toml.
+#
+# NOTE:
+# Application dependencies are managed in requirements.txt.
+# ==========================================================
+
+[project]
+name = "uniclear-student-platform"
+version = "1.0.0"
+description = "A final-year student clearance management platform built with Flask and MongoDB."
+requires-python = ">=3.10"
