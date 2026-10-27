@@ -14,6 +14,10 @@
 # 9. Return consistent JSON errors for expected failures.
 # 10. Avoid relying on local disk for persistent file storage.
 # 11. Prevent Flask Response objects from being JSON-encoded.
+# 12. Validate the clearance stage order before document uploads.
+# 13. Reject explicit uploads to an earlier or later stage.
+# 14. Prevent any document uploads after final clearance.
+# 15. Expose clearance completion status to the frontend.
 #
 # API ENDPOINTS:
 # POST /api/v1/clearance/register/student
@@ -65,6 +69,9 @@ from app.code.general_function import (
     get_student_full_name,
     get_clearance_by_reg_no,
     serialize_document,
+    normalize_clearance_stage,
+    are_previous_stages_approved,
+    is_clearance_stage_consistent,
 )
 
 
@@ -316,6 +323,89 @@ def get_stage_document_list(clearance, stage):
     documents = stage_data.get("documents", [])
 
     return documents if isinstance(documents, list) else []
+
+
+def validate_clearance_workflow(clearance):
+    """
+    Validate the overall clearance record before accepting a document upload.
+
+    The current stage must be part of the configured workflow, previous stages
+    must be approved, and the stage records must agree with current_stage and
+    the overall clearance status. This protects against inconsistent records
+    allowing an upload to skip a required stage.
+
+    Returns:
+        (True, current_stage, None) when the workflow is valid.
+        (False, None, error_message) when it is invalid.
+    """
+
+    if not isinstance(clearance, dict):
+        return False, None, "Clearance record is invalid."
+
+    stages = clearance.get("stages")
+
+    if not isinstance(stages, dict):
+        return False, None, "Clearance stage data is invalid."
+
+    stored_current_stage = clearance.get("current_stage", "")
+    current_stage = normalize_clearance_stage(stored_current_stage)
+
+    if not current_stage or current_stage not in CLEARANCE_STAGES:
+        return False, None, "The current clearance stage is invalid."
+
+    # Database records should store canonical stage names such as
+    # student_affairs, not display labels or differently-cased values.
+    if stored_current_stage != current_stage:
+        return (
+            False,
+            None,
+            "The clearance record contains a non-standard current stage. "
+            "Please contact the clearance administrator.",
+        )
+
+    # Every configured stage must have a valid stage record.
+    for configured_stage in CLEARANCE_STAGES:
+        record = stages.get(configured_stage)
+
+        if not isinstance(record, dict):
+            return (
+                False,
+                None,
+                "The clearance record is missing valid data for the "
+                f"{configured_stage.replace('_', ' ')} stage.",
+            )
+
+    try:
+        # Confirm that current_stage, stage statuses, and overall status
+        # are consistent with the official clearance order.
+        if not is_clearance_stage_consistent(clearance):
+            return (
+                False,
+                None,
+                "The clearance record does not follow the required stage order. "
+                "Please contact the clearance administrator before uploading.",
+            )
+
+        # Explicitly verify that all previous stages have been approved.
+        if not are_previous_stages_approved(clearance, current_stage):
+            return (
+                False,
+                None,
+                "Previous clearance stages have not all been approved. "
+                "You cannot submit documents for this stage yet.",
+            )
+
+    except Exception:
+        logger.exception("Clearance workflow consistency check failed.")
+
+        return (
+            False,
+            None,
+            "Unable to validate the clearance workflow. Please try again or "
+            "contact the clearance administrator.",
+        )
+
+    return True, current_stage, None
 
 
 def document_public_data(document):
@@ -1194,7 +1284,14 @@ class ViewClearance(Resource):
 
         return json_response({
             "success": True,
-            "message": "Clearance record retrieved successfully.",
+            "message": (
+                "Your final-year clearance has been completed successfully."
+                if clearance.get("status") == "completed"
+                else "Clearance record retrieved successfully."
+            ),
+            "clearance_status": clearance.get("status", "in_progress"),
+            "clearance_completed": clearance.get("status") == "completed",
+            "current_stage": clearance.get("current_stage"),
             "data": clearance,
         }, 200)
 
@@ -1207,6 +1304,8 @@ class UploadDocument(Resource):
     """
     Multipart form fields:
         reg_no         Student registration number
+        stage          Optional requested stage; if supplied, it must match
+                       the student's current clearance stage
         document_name  Human-readable document name
         document       PDF, DOC or DOCX file
     """
@@ -1268,36 +1367,76 @@ class UploadDocument(Resource):
                 404,
             )
 
+        # A completed clearance is terminal: no more document uploads are allowed.
         if clearance.get("status") == "completed":
-            return error_response(
-                "Your clearance is already completed.",
-                409,
-            )
+            return json_response({
+                "success": False,
+                "message": (
+                    "Your final-year clearance is already completed. "
+                    "No further documents can be submitted."
+                ),
+                "clearance_status": "completed",
+                "clearance_completed": True,
+            }, 409)
 
-        current_stage = clearance.get("current_stage")
+        # Validate stage order before accepting the upload. This checks that
+        # current_stage is configured, every preceding stage is approved, and
+        # the stage records agree with the overall clearance status.
+        workflow_valid, current_stage, workflow_error = validate_clearance_workflow(
+            clearance
+        )
 
-        if current_stage not in CLEARANCE_STAGES:
-            return error_response(
-                "The current clearance stage is invalid.",
-                409,
-            )
+        if not workflow_valid:
+            return error_response(workflow_error, 409)
+
+        # The stage field is optional for backward compatibility with existing
+        # frontend clients. If supplied, it is treated as the student's explicit
+        # requested stage and must equal the stage currently open for submission.
+        requested_stage_raw = request.form.get("stage", "").strip()
+
+        if requested_stage_raw:
+            requested_stage = normalize_clearance_stage(requested_stage_raw)
+
+            if not requested_stage or requested_stage not in CLEARANCE_STAGES:
+                return json_response({
+                    "success": False,
+                    "message": "The requested clearance stage is invalid.",
+                    "requested_stage": requested_stage_raw,
+                    "current_stage": current_stage,
+                    "allowed_stages": CLEARANCE_STAGES,
+                }, 400)
+
+            if requested_stage != current_stage:
+                requested_index = CLEARANCE_STAGES.index(requested_stage)
+                current_index = CLEARANCE_STAGES.index(current_stage)
+
+                direction = (
+                    "earlier"
+                    if requested_index < current_index
+                    else "later"
+                )
+
+                return json_response({
+                    "success": False,
+                    "message": (
+                        f"You cannot upload a document for the "
+                        f"{requested_stage.replace('_', ' ')} stage because "
+                        f"your current clearance stage is "
+                        f"{current_stage.replace('_', ' ')}. The requested "
+                        f"stage is a {direction} stage in the clearance "
+                        "workflow. Upload the document only for your "
+                        "current stage."
+                    ),
+                    "requested_stage": requested_stage,
+                    "current_stage": current_stage,
+                    "stage_direction": direction,
+                    "stage_status": clearance.get("stages", {}).get(
+                        current_stage, {}
+                    ).get("status"),
+                }, 409)
 
         stages = clearance.get("stages", {})
-
-        if not isinstance(stages, dict):
-            return error_response(
-                "Clearance stage data is invalid.",
-                409,
-            )
-
         stage_data = stages.get(current_stage, {})
-
-        if not isinstance(stage_data, dict):
-            return error_response(
-                "Clearance stage data is invalid.",
-                409,
-            )
-
         stage_status = stage_data.get("status")
 
         if stage_status not in {
@@ -1553,9 +1692,13 @@ class ViewUploadedDocuments(Resource):
         return json_response({
             "success": True,
             "message": "Uploaded documents retrieved successfully.",
+            "clearance_status": clearance.get("status", "in_progress"),
+            "clearance_completed": clearance.get("status") == "completed",
             "data": {
                 "reg_no": reg_no,
                 "current_stage": clearance.get("current_stage"),
+                "clearance_status": clearance.get("status", "in_progress"),
+                "clearance_completed": clearance.get("status") == "completed",
                 "documents": documents,
                 "total_documents": len(documents),
             },

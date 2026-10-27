@@ -11,7 +11,8 @@
 # 6. Notify students about clearance approvals.
 # 7. Notify students about clearance rejections.
 # 8. Notify students after stage OTP verification.
-# 9. Support local development and Vercel deployment.
+# 9. Send a dedicated final-clearance congratulatory email.
+# 10. Support local development and Vercel deployment.
 # ==========================================================
 
 import html
@@ -550,6 +551,144 @@ class EmailSender:
         return EmailSender._send_html_email(
             receiver_email,
             subject,
+            body,
+        )
+
+    # ======================================================
+    # NEW FUNCTION: FINAL-YEAR CLEARANCE COMPLETION EMAIL
+    # ======================================================
+
+    @staticmethod
+    def send_student_clearance_completed_email(
+        receiver_email,
+        student_name,
+        reg_no,
+    ):
+        """
+        Send a dedicated congratulatory email after the student
+        has successfully completed all final-year clearance stages.
+
+        This email is intended to be called only after the backend
+        has successfully marked the student's clearance as completed.
+
+        The message is formal and university-appropriate, with tasteful
+        celebratory emojis and the student's registration number.
+
+        No OTP is generated or included because this is the final
+        completion of the student's clearance process.
+        """
+
+        content = (
+            """
+            <div style="
+                margin:0 0 24px;
+                padding:24px 18px;
+                text-align:center;
+                background-color:#f0fdf4;
+                border:1px solid #bbf7d0;
+                border-radius:10px;
+            ">
+                <div style="
+                    font-size:38px;
+                    line-height:1.4;
+                    margin-bottom:10px;
+                ">🎓</div>
+
+                <h2 style="
+                    margin:0 0 12px;
+                    color:#166534;
+                    font-size:23px;
+                    line-height:1.4;
+                ">Congratulations!</h2>
+
+                <p style="
+                    margin:0;
+                    color:#166534;
+                    font-size:16px;
+                    line-height:1.7;
+                    font-weight:600;
+                ">
+                    Your final-year clearance process has been
+                    successfully completed.
+                </p>
+
+                <div style="
+                    margin-top:16px;
+                    font-size:24px;
+                ">✅ 🎉</div>
+            </div>
+            """
+            + EmailSender._paragraph(
+                "We are pleased to inform you that you have successfully "
+                "completed all the required stages of your final-year "
+                "clearance through the UniClear Student Clearance Platform."
+            )
+            + EmailSender._button(
+                "Registration Number",
+                reg_no,
+            )
+            + """
+            <div style="
+                margin:22px 0;
+                padding:18px;
+                border-left:4px solid #16a34a;
+                background-color:#f8fafc;
+                border-radius:4px;
+            ">
+                <p style="
+                    margin:0 0 8px;
+                    font-size:15px;
+                    font-weight:bold;
+                    color:#102a43;
+                ">
+                    Clearance Status: COMPLETED
+                </p>
+
+                <p style="
+                    margin:0;
+                    font-size:14px;
+                    line-height:1.7;
+                    color:#475569;
+                ">
+                    All required clearance stages have been approved.
+                    No further clearance stage or stage-verification
+                    OTP is required for this completed clearance process.
+                </p>
+            </div>
+            """
+            + EmailSender._paragraph(
+                "Thank you for completing your clearance through UniClear. "
+                "Please retain this email for your personal records and "
+                "refer to your student dashboard for your clearance status."
+            )
+            + EmailSender._paragraph(
+                "On behalf of the university clearance administration, "
+                "we congratulate you on reaching this important milestone "
+                "and wish you success in your future endeavours."
+            )
+            + """
+            <p style="
+                margin:24px 0 0;
+                text-align:center;
+                color:#102a43;
+                font-size:16px;
+                line-height:1.7;
+                font-weight:bold;
+            ">
+                🎓 Congratulations on completing your final-year clearance!
+            </p>
+            """
+        )
+
+        body = EmailSender._build_email(
+            "Final-Year Clearance Successfully Completed",
+            f"Congratulations, {student_name}",
+            content,
+        )
+
+        return EmailSender._send_html_email(
+            receiver_email,
+            "🎓 Congratulations! Your Final-Year Clearance Is Complete",
             body,
         )
 

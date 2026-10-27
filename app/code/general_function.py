@@ -1,3 +1,4 @@
+
 # ==========================================================
 # UNICLEAR - STUDENT CLEARANCE PLATFORM
 # FILE: app/code/general_function.py
@@ -13,6 +14,9 @@
 # 8. Map staff roles to their assigned clearance stages.
 # 9. Provide consistent UTC timestamps.
 # 10. Support final-year student clearance.
+# 11. Validate that previous clearance stages are approved.
+# 12. Validate clearance current-stage consistency.
+# 13. Normalize registration numbers consistently.
 # ==========================================================
 
 from datetime import datetime, timezone
@@ -34,6 +38,10 @@ from app.utils import (
 # CLEARANCE WORKFLOW CONFIGURATION
 # ==========================================================
 
+# IMPORTANT:
+# Do not change the order without updating the entire
+# clearance workflow and testing every stage transition.
+
 CLEARANCE_STAGES = [
     "finance",
     "department",
@@ -51,6 +59,15 @@ STAGE_ORDER = {
 }
 
 FINAL_CLEARANCE_STAGE = CLEARANCE_STAGES[-1]
+
+# Recognized stage states.
+# These constants provide consistent spellings throughout
+# the application.
+STAGE_STATUS_PENDING = "pending"
+STAGE_STATUS_AWAITING_SUBMISSION = "awaiting_submission"
+STAGE_STATUS_UNDER_REVIEW = "under_review"
+STAGE_STATUS_APPROVED = "approved"
+STAGE_STATUS_REJECTED = "rejected"
 
 
 # ==========================================================
@@ -89,6 +106,64 @@ def utc_timestamp():
 
 
 # ==========================================================
+# REGISTRATION NUMBER UTILITIES
+# ==========================================================
+
+def normalize_reg_no(reg_no):
+    """
+    Normalize a student registration number consistently.
+
+    Registration numbers are stripped of surrounding
+    whitespace and converted to uppercase.
+
+    Returns:
+        str: Normalized registration number.
+        str: Empty string when the input is invalid.
+
+    IMPORTANT:
+    Existing student records should use this same format.
+    """
+
+    if not isinstance(reg_no, str):
+        return ""
+
+    return reg_no.strip().upper()
+
+
+# ==========================================================
+# CLEARANCE STAGE NORMALIZATION
+# ==========================================================
+
+def normalize_clearance_stage(stage):
+    """
+    Normalize a stage and return it only when it is an
+    official clearance stage.
+
+    Unlike a general text normalizer, this helper does not
+    treat an arbitrary non-empty string as a valid stage.
+
+    Returns:
+        str: Official normalized stage.
+        str: Empty string for an invalid stage.
+    """
+
+    if not isinstance(stage, str) or not stage.strip():
+        return ""
+
+    normalized_stage = normalize_stage_name(stage)
+
+    if not isinstance(normalized_stage, str):
+        return ""
+
+    normalized_stage = normalized_stage.strip().lower()
+
+    if normalized_stage not in STAGE_ORDER:
+        return ""
+
+    return normalized_stage
+
+
+# ==========================================================
 # CLEARANCE STAGE UTILITIES
 # ==========================================================
 
@@ -108,7 +183,10 @@ def get_stage_index(stage):
         int or None: Stage index, or None if invalid.
     """
 
-    normalized_stage = normalize_stage_name(stage)
+    normalized_stage = normalize_clearance_stage(stage)
+
+    if not normalized_stage:
+        return None
 
     return STAGE_ORDER.get(normalized_stage)
 
@@ -118,7 +196,7 @@ def is_valid_clearance_stage(stage):
     Check whether a stage belongs to the official workflow.
     """
 
-    return normalize_stage_name(stage) in STAGE_ORDER
+    return bool(normalize_clearance_stage(stage))
 
 
 def get_next_clearance_stage(stage):
@@ -130,12 +208,12 @@ def get_next_clearance_stage(stage):
                      or an invalid stage.
     """
 
-    normalized_stage = normalize_stage_name(stage)
-    stage_index = STAGE_ORDER.get(normalized_stage)
+    normalized_stage = normalize_clearance_stage(stage)
 
-    if stage_index is None:
+    if not normalized_stage:
         return None
 
+    stage_index = STAGE_ORDER[normalized_stage]
     next_index = stage_index + 1
 
     if next_index >= len(CLEARANCE_STAGES):
@@ -153,10 +231,14 @@ def get_previous_clearance_stage(stage):
                      first stage or the stage is invalid.
     """
 
-    normalized_stage = normalize_stage_name(stage)
-    stage_index = STAGE_ORDER.get(normalized_stage)
+    normalized_stage = normalize_clearance_stage(stage)
 
-    if stage_index is None or stage_index == 0:
+    if not normalized_stage:
+        return None
+
+    stage_index = STAGE_ORDER[normalized_stage]
+
+    if stage_index == 0:
         return None
 
     return CLEARANCE_STAGES[stage_index - 1]
@@ -167,7 +249,10 @@ def get_stage_role(stage):
     Return the recognized staff role for a clearance stage.
     """
 
-    normalized_stage = normalize_stage_name(stage)
+    normalized_stage = normalize_clearance_stage(stage)
+
+    if not normalized_stage:
+        return None
 
     for role, assigned_stage in STAFF_STAGE_ROLES.items():
         if assigned_stage == normalized_stage:
@@ -186,17 +271,234 @@ def get_assigned_stage(role):
     if not isinstance(role, str):
         return None
 
-    role = role.strip()
+    normalized_role = role.strip().casefold()
 
-    return STAFF_STAGE_ROLES.get(role)
+    for configured_role, assigned_stage in STAFF_STAGE_ROLES.items():
+        if configured_role.casefold() == normalized_role:
+            return assigned_stage
+
+    return None
 
 
 def get_stage_display_name(stage):
     """
     Return a human-readable clearance-stage name.
+
+    Invalid stages return an empty string rather than being
+    presented as official workflow stages.
     """
 
-    return format_stage_name(stage)
+    normalized_stage = normalize_clearance_stage(stage)
+
+    if not normalized_stage:
+        return ""
+
+    return format_stage_name(normalized_stage)
+
+
+# ==========================================================
+# STAGE RECORD UTILITIES
+# ==========================================================
+
+def get_stage_record(clearance, stage):
+    """
+    Retrieve a stage record from a clearance document.
+
+    Supports both dictionary-based stage records and legacy
+    list-based records.
+
+    Returns:
+        dict: Stage record, or an empty dictionary if absent.
+    """
+
+    if not isinstance(clearance, dict):
+        return {}
+
+    normalized_stage = normalize_clearance_stage(stage)
+
+    if not normalized_stage:
+        return {}
+
+    stages = clearance.get("stages", {})
+
+    if isinstance(stages, dict):
+        # The standard schema uses official stage names as keys.
+        record = stages.get(normalized_stage)
+
+        if isinstance(record, dict):
+            return record
+
+        # Allow existing records whose keys differ only in
+        # capitalization or harmless stage-name formatting.
+        for stored_name, stored_record in stages.items():
+            if (
+                normalize_clearance_stage(stored_name)
+                == normalized_stage
+                and isinstance(stored_record, dict)
+            ):
+                return stored_record
+
+        return {}
+
+    if isinstance(stages, list):
+        for record in stages:
+            if not isinstance(record, dict):
+                continue
+
+            record_stage = normalize_clearance_stage(
+                record.get("stage", "")
+            )
+
+            if record_stage == normalized_stage:
+                return record
+
+    return {}
+
+
+def get_clearance_current_stage(clearance):
+    """
+    Return the normalized official current stage.
+
+    Returns:
+        str: Valid stage name, or an empty string if invalid.
+    """
+
+    if not isinstance(clearance, dict):
+        return ""
+
+    return normalize_clearance_stage(
+        clearance.get("current_stage", "")
+    )
+
+
+def are_previous_stages_approved(clearance, stage):
+    """
+    Check whether every official stage before the supplied
+    stage has status 'approved'.
+
+    The first stage has no previous stages, so it passes this
+    ordering check when the clearance is a valid dictionary
+    with a dictionary or list of stage records.
+
+    This helper does not approve stages, update the database,
+    or independently authorize a stage transition.
+
+    Returns:
+        bool: True only when all preceding stages are approved
+              and the clearance stage data is structurally valid.
+    """
+
+    if not isinstance(clearance, dict):
+        return False
+
+    normalized_stage = normalize_clearance_stage(stage)
+
+    if not normalized_stage:
+        return False
+
+    stages = clearance.get("stages")
+
+    if not isinstance(stages, (dict, list)):
+        return False
+
+    # Verify that the requested stage itself has a stage record.
+    if not get_stage_record(clearance, normalized_stage):
+        return False
+
+    stage_index = STAGE_ORDER[normalized_stage]
+
+    for previous_stage in CLEARANCE_STAGES[:stage_index]:
+        previous_record = get_stage_record(
+            clearance,
+            previous_stage,
+        )
+
+        if previous_record.get("status") != STAGE_STATUS_APPROVED:
+            return False
+
+    return True
+
+
+def is_clearance_stage_consistent(clearance):
+    """
+    Validate the clearance's current-stage status against
+    the official stage sequence.
+
+    For an active clearance:
+      - current_stage must be an official stage.
+      - every earlier stage must be approved.
+      - the current stage must have a recognized workflow status.
+      - later stages must not already be approved.
+
+    A completed clearance must have the final stage approved
+    and the current_stage set to the final stage.
+
+    This helper checks consistency, not whether the current
+    request is authorized to perform an operation.
+    """
+
+    if not isinstance(clearance, dict):
+        return False
+
+    current_stage = get_clearance_current_stage(clearance)
+
+    if not current_stage:
+        return False
+
+    stages = clearance.get("stages")
+
+    if not isinstance(stages, (dict, list)):
+        return False
+
+    current_record = get_stage_record(clearance, current_stage)
+
+    if not current_record:
+        return False
+
+    current_status = current_record.get("status")
+
+    valid_statuses = {
+        STAGE_STATUS_PENDING,
+        STAGE_STATUS_AWAITING_SUBMISSION,
+        STAGE_STATUS_UNDER_REVIEW,
+        STAGE_STATUS_APPROVED,
+        STAGE_STATUS_REJECTED,
+    }
+
+    if current_status not in valid_statuses:
+        return False
+
+    if not are_previous_stages_approved(clearance, current_stage):
+        return False
+
+    current_index = STAGE_ORDER[current_stage]
+
+    # Later stages must not be approved before the workflow
+    # reaches them. This catches premature advancement or
+    # inconsistent stage records.
+    for later_stage in CLEARANCE_STAGES[current_index + 1:]:
+        later_record = get_stage_record(clearance, later_stage)
+
+        if later_record.get("status") == STAGE_STATUS_APPROVED:
+            return False
+
+    clearance_status = str(
+        clearance.get("status", "")
+    ).strip().lower()
+
+    if clearance_status == "completed":
+        return (
+            current_stage == FINAL_CLEARANCE_STAGE
+            and current_status == STAGE_STATUS_APPROVED
+        )
+
+    # A non-completed clearance must not have already approved
+    # the final stage.
+    if current_stage == FINAL_CLEARANCE_STAGE:
+        if current_status == STAGE_STATUS_APPROVED:
+            return False
+
+    return True
 
 
 # ==========================================================
@@ -205,23 +507,29 @@ def get_stage_display_name(stage):
 
 def get_student_by_reg_no(reg_no):
     """
-    Retrieve a student using their registration number.
+    Retrieve a student using a normalized registration number.
 
     Returns:
         dict or None
+
+    IMPORTANT:
+    Existing student documents should store reg_no in
+    normalized uppercase form for consistent lookups.
     """
 
-    if not isinstance(reg_no, str) or not reg_no.strip():
+    normalized_reg_no = normalize_reg_no(reg_no)
+
+    if not normalized_reg_no:
         return None
 
     return mongo.db.students.find_one({
-        "reg_no": reg_no.strip()
+        "reg_no": normalized_reg_no
     })
 
 
 def get_staff_by_id(staff_id):
     """
-    Retrieve a staff member using their staff ID.
+    Retrieve a staff member using a normalized staff ID.
 
     Returns:
         dict or None
@@ -231,20 +539,23 @@ def get_staff_by_id(staff_id):
         return None
 
     return mongo.db.staff.find_one({
-        "staff_id": staff_id.strip()
+        "staff_id": staff_id.strip().upper()
     })
 
 
 def get_clearance_by_reg_no(reg_no):
     """
-    Retrieve a student's clearance record using reg_no.
+    Retrieve a student's clearance record using a normalized
+    registration number.
     """
 
-    if not isinstance(reg_no, str) or not reg_no.strip():
+    normalized_reg_no = normalize_reg_no(reg_no)
+
+    if not normalized_reg_no:
         return None
 
     return mongo.db.clearances.find_one({
-        "reg_no": reg_no.strip()
+        "reg_no": normalized_reg_no
     })
 
 
@@ -409,16 +720,16 @@ def is_stage_assigned_to_staff(staff, stage):
     if not is_active_account(staff):
         return False
 
-    assigned_stage = normalize_stage_name(
+    assigned_stage = normalize_clearance_stage(
         staff.get("assigned_stage", "")
     )
 
-    requested_stage = normalize_stage_name(stage)
+    requested_stage = normalize_clearance_stage(stage)
 
     return (
         bool(assigned_stage)
+        and bool(requested_stage)
         and assigned_stage == requested_stage
-        and is_valid_clearance_stage(requested_stage)
     )
 
 
